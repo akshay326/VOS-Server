@@ -10,33 +10,51 @@ app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db = SQLAlchemy(app)
 ma = Marshmallow(app)
 
-
-# Assuming there are 50 prime sets
-primes_list = {}
-
 # Database URL
 BASE_URL = "https://volunteer-computing.firebaseio.com/primality-tests/"
+
+
+class PrimeList(db.Model):
+    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    set_number = db.Column(db.Integer, unique=True)
+    state = db.Column(db.String(40))  # Can be 'checked','checking','yet_to_be_checked'
+    assigned_to = db.Column(db.String(40))  # The client name or ID its assigned to
+
+    def __init__(self, set_number, state, assigned_to):
+        self.set_number = set_number
+        self.state = state
+        self.assigned_to = assigned_to
+
+
+class PrimeListSchema(ma.Schema):
+    class Meta:
+        # Fields to expose
+        fields = ('set_number', 'state')
+
+
+prime_schema = PrimeListSchema(many=True)
 
 
 # endpoint to get the state of primes_list
 @app.route("/get_state", methods=["GET"])
 def get_shared_resource_state():
-    return jsonify(primes_list)
+    primes_list = PrimeList.query.all()
+    result = prime_schema.dump(primes_list)
+    return jsonify(result)
 
 
 # endpoint to get a working URL for the client
 # This will call synchronization problems
 @app.route("/get_working_url", methods=["GET"])
-def user_detail():
+def get_working_url():
 
-    # Find which set is to be checked
-    i = 0
-    for i in range(len(primes_list)):
-        if primes_list[i] == 'yet_to_be_checked':
-            primes_list[i] = 'checking'
+    # Get a unvisited/untested prime set
+    prime = PrimeList.query.filter_by(state='yet_to_be_checked').first()
+    prime.state = 'checking'
+    url = BASE_URL + "prime_sets/" + str(prime.set_number) + "/set/.json"
 
-    # Return the corresponding URL to download dataset
-    url = BASE_URL+"prime_sets/"+str(i)+"/set/.json"
+    # DB has changed. Update it
+    db.session.commit()
 
     return jsonify(url)
 
@@ -45,15 +63,22 @@ def user_detail():
 # This happens when a client script checks a set of primes
 # and updates the server
 @app.route("/update", methods=["PUT"])
-def user_update():
+def database_update():
 
     # `divisor` can be -1(no divisor found) or a natural number
-    divisor = request.json['divisor']
-    set_number = request.json['set_number']
+    divisor = int(request.json['divisor'])
+    set_number = int(request.json['set_number'])
 
     if divisor == -1:
         # update prime list
-        primes_list[set_number] = 'checked'
+        prime = PrimeList.query.filter_by(set_number=set_number).first()
+        prime.state = 'checked'
+        db.session.commit()
+    else:
+        prime = PrimeList.query.filter_by(set_number=set_number).first()
+        prime.state = 'found'
+        db.session.commit()
+
     # TODO else do something
 
     return jsonify("Shared variable updated successfully")
@@ -63,8 +88,16 @@ def user_update():
 @app.route("/reset", methods=["GET"])
 def reset_shared_variable():
 
+    # Drop old tables and create new one
+    db.drop_all()
+    db.create_all()
+    db.session.commit()
+
+    # Create first 50 sets in DB
     for i in range(50):
-        primes_list[i] = 'yet_to_be_checked'
+        prime = PrimeList(set_number=i, state='yet_to_be_checked',assigned_to='None')
+        db.session.add(prime)
+        db.session.commit()
 
     return jsonify("Shared variable reset successfully")
 
