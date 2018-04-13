@@ -3,6 +3,8 @@ from flask_sqlalchemy import SQLAlchemy
 from flask_marshmallow import Marshmallow
 import os
 
+from threading import Semaphore
+
 app = Flask(__name__)
 basedir = os.path.abspath(os.path.dirname(__file__))
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///' + os.path.join(basedir, 'crud.sqlite')
@@ -12,6 +14,10 @@ ma = Marshmallow(app)
 
 # Database URL
 BASE_URL = "https://volunteer-computing.firebaseio.com/primality-tests/"
+
+# Semaphore to prevent race condition if there are multiple
+# get requests to `get_working_url` at once.
+read_semaphore = Semaphore(value=1)
 
 
 class PrimeList(db.Model):
@@ -48,6 +54,8 @@ def get_shared_resource_state():
 @app.route("/get_working_url", methods=["GET"])
 def get_working_url():
 
+    read_semaphore.acquire()
+    
     # Get a unvisited/untested prime set
     prime = PrimeList.query.filter_by(state='yet_to_be_checked').first()
     prime.state = 'checking'
@@ -55,6 +63,8 @@ def get_working_url():
 
     # DB has changed. Update it
     db.session.commit()
+    
+    read_semaphore.release()
 
     return jsonify(url)
 
