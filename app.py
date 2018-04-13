@@ -75,6 +75,8 @@ def get_working_url():
 @app.route("/update", methods=["PUT"])
 def database_update():
 
+    read_semaphore.acquire()
+
     # `divisor` can be -1(no divisor found) or a natural number
     divisor = int(request.json['divisor'])
     set_number = int(request.json['set_number'])
@@ -88,8 +90,9 @@ def database_update():
         prime = PrimeList.query.filter_by(set_number=set_number).first()
         prime.state = 'found'
         db.session.commit()
-
     # TODO else do something
+
+    read_semaphore.release()
 
     return jsonify("Shared variable updated successfully")
 
